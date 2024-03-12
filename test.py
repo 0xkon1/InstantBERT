@@ -37,7 +37,7 @@ model.config.vocab_size = model.config.encoder.vocab_size
 # Test the model with a sample message
 message = "Hey, wanna go out today?"  # replace this with your test message
 input_ids = tokenizer.encode(message, return_tensors='pt').to(device)
-output_ids = model.generate(input_ids, decoder_start_token_id=tokenizer.cls_token_id, bos_token_id=tokenizer.cls_token_id, max_new_tokens=50, temperature=0.8)
+output_ids = model.generate(input_ids, decoder_start_token_id=tokenizer.cls_token_id, bos_token_id=tokenizer.cls_token_id, max_new_tokens=50, temperature=0.7)
 output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
 print(f'Input: {message}')
