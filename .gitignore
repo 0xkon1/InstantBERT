@@ -1,0 +1,4 @@
+dataset/*
+logs/*
+results/*
+**/en.txt*
