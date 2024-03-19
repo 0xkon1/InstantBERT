@@ -1,43 +1,83 @@
 import torch
-import os
-from transformers import BertTokenizer, EncoderDecoderModel, BertConfig, EncoderDecoderConfig
+from transformers import BertTokenizer, EncoderDecoderModel
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+def plot_attention(attention, tokens, figsize=(10, 10)):
+    # Convert to array
+    attention = np.array(attention)
+
+    # Cut off the padding (typically represented by zeros in the attention array)
+    # This assumes that 'attention' is a square array with shape (seq_len, seq_len)
+    seq_len = len(tokens)
+    attention = attention[:seq_len, :seq_len]
+    tokens = tokens[:seq_len]
+
+    # Set up plot
+    plt.figure(figsize=figsize)
+    sns.heatmap(attention, xticklabels=tokens, yticklabels=tokens, square=True)
+    plt.show()
+
 
 # Load the BERT tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 # Specify the checkpoint you want to test
-checkpoint_path = './results/checkpoint-35000'  # adjust this to your checkpoint path
+checkpoint_path = './results/checkpoint-epoch-2'  # adjust this to your checkpoint path
 
-# Load the configuration from the checkpoint
-config_path = os.path.join(checkpoint_path, "config.json")
-config = BertConfig.from_pretrained(config_path)
-
-# Load the generation config
-generation_config_path = os.path.join(checkpoint_path, "generation_config.json")
-generation_config = BertConfig.from_pretrained(generation_config_path)
-
-# Create an EncoderDecoderConfig
-encoder_decoder_config = EncoderDecoderConfig.from_encoder_decoder_configs(config, generation_config)
-
-# Load the model from the checkpoint using the configuration
-model = EncoderDecoderModel.from_pretrained(checkpoint_path, config=encoder_decoder_config)
+# Load the model from the checkpoint
+model = EncoderDecoderModel.from_pretrained(checkpoint_path)
 
 # Move the model to the GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = model.to(device)
+model.to(device)
 
 # Set the model to evaluation mode
 model.eval()
 
-# Specify the special tokens after moving the model to the device
-model.config.eos_token_id = tokenizer.sep_token_id
-model.config.pad_token_id = tokenizer.pad_token_id
-model.config.vocab_size = model.config.encoder.vocab_size
-
 # Test the model with a sample message
-message = "Hey, wanna go out today?"  # replace this with your test message
-input_ids = tokenizer.encode(message, return_tensors='pt').to(device)
-output_ids = model.generate(input_ids, decoder_start_token_id=tokenizer.cls_token_id, bos_token_id=tokenizer.cls_token_id, max_new_tokens=50, temperature=0.7)
+message = "will you let me drive the car today?"  # replace this with your test message
+
+#encoding
+input_ids = tokenizer.encode_plus(message, return_tensors='pt', max_length=512, padding='max_length', truncation=True).to(device)['input_ids']
+
+# Perform a forward pass to get the attention weights
+with torch.no_grad():
+    outputs = model(input_ids=input_ids, decoder_input_ids=input_ids, output_attentions=True)
+    attentions = outputs.encoder_attentions[-1]  # Get the attention from the last layer of the encoder
+
+
+# Decode the input for token labels
+tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
+
+# Remove padding and get actual sequence length
+seq_len = sum(input_ids[0] != tokenizer.pad_token_id)
+tokens = tokens[:seq_len]
+attentions = attentions[:, :, :seq_len, :seq_len]  # Remove padding
+
+# Plot the attention maps
+for head in range(attentions.size(1)):
+    print(f'Head {head+1}:')
+    attention_head = attentions[0, head].detach().cpu().numpy()  # 0 for grabbing the first example
+    plot_attention(attention_head, tokens)
+
+
+# Explicitly specify the decoder_start_token_id
+decoder_start_token_id = tokenizer.cls_token_id
+
+# Set the temperature parameter and enable sampling
+temperature = 0.7  # Adjust as needed
+do_sample = True  # Enable sampling
+
+# Generate the output
+output_ids = model.generate(input_ids,
+                            decoder_start_token_id=decoder_start_token_id,
+                            max_length=512,
+                            num_beams=5, 
+                            early_stopping=True,
+                            temperature = temperature,
+                            do_sample=do_sample)
 output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
 print(f'Input: {message}')

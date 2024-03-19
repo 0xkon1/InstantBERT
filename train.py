@@ -1,13 +1,34 @@
 import tensorflow as tf
-from transformers import BertTokenizer, EncoderDecoderModel, TrainingArguments, Trainer, AdamW
+from transformers import MobileBertModel, MobileBertConfig
+from transformers import BertTokenizer, EncoderDecoderModel, TrainingArguments, Trainer, AdamW, logging,
 from torch.utils.data import Dataset
 import torch
 import glob
 import os
+from datetime import datetime
+
+logging.set_verbosity_info()
 
 # Load the BERT tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 torch.cuda.empty_cache()
+current_datetime = datetime.now().strftime("%m-%d %H-%M-%S")
+current_datetime = str(current_datetime)
+
+# Define training arguments
+training_args = TrainingArguments(
+    output_dir='./results',
+    evaluation_strategy="steps",
+    fp16=True,
+    num_train_epochs=3,
+    per_device_train_batch_size=2,
+    per_device_eval_batch_size=64,
+    warmup_steps=500,
+    weight_decay=0.01,
+    logging_dir='./logs',
+    save_strategy="steps",
+    load_best_model_at_end=True,
+)
 
 # Define your custom dataset
 class ChatDataset(Dataset):
@@ -39,9 +60,11 @@ class ChatDataset(Dataset):
         }
 
 # Load your data
-# Get a list of all TFRecord files
-tfrecord_files = glob.glob('dataset/dataflow_output/train-*.tfrecord')
-dataset = ChatDataset(tfrecord_files)
+# Prepare training and validation datasets
+train_tfrecord_files = glob.glob('dataset/train/*.tfrecord')
+val_tfrecord_files = glob.glob('dataset/validation/*.tfrecord')
+train_dataset = ChatDataset(train_tfrecord_files)
+val_dataset = ChatDataset(val_tfrecord_files)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -58,7 +81,7 @@ if checkpoints:
 else:
     # If there are no checkpoints, initialize a new model
     print("No checkpoints found. Starting training from scratch.")
-    model = EncoderDecoderModel.from_encoder_decoder_pretrained('bert-base-uncased', 'bert-base-uncased')
+    model = EncoderDecoderModel.from_encoder_decoder_pretrained('distilbert-base-uncased', 'bert-base-uncased')
 model = model.to(device)
 optimizer = AdamW(model.parameters(), lr=1e-5)
 
@@ -71,23 +94,13 @@ model.config.vocab_size = model.config.encoder.vocab_size
 # Define the gradient accumulation steps
 gradient_accumulation_steps = 4 
 
-# Define the training arguments
-training_args = TrainingArguments(
-    output_dir='./results',
-    fp16=True,
-    num_train_epochs=1,
-    per_device_train_batch_size=2,
-    per_device_eval_batch_size=64,
-    warmup_steps=500,
-    weight_decay=0.01,
-    logging_dir='./logs',
-)
 
 # Create a Trainer instance
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=dataset,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset
 )
 
 # for i in range(5):
@@ -142,5 +155,11 @@ for epoch in range(training_args.num_train_epochs):
             total_loss = 0.0  # Reset the total loss
 
         # Save a checkpoint every `save_steps` steps
-        if step % save_steps == 0:
-            trainer.save_model(f"{training_args.output_dir}/checkpoint-{step}")
+        if (step + 1) % save_steps == 0:
+            trainer.save_model(f"{training_args.output_dir}/checkpoint-step-{step+1}")
+
+    # Save a checkpoint at the end of each epoch
+    trainer.save_model(f"{training_args.output_dir}/checkpoint-epoch-{epoch}")
+
+# Save the final model
+trainer.save_model(f"{training_args.output_dir}/final_model_{current_datetime}")
