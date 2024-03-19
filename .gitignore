@@ -2,3 +2,4 @@ dataset/*
 logs/*
 results/*
 **/en.txt*
+*.csv
